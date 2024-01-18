@@ -18,15 +18,20 @@ pipeline {
         registryCredentials = "nexus-user-credentials"
         registry = "44.211.159.153:8081/repository/utrains-nexus-registry/"
         dockerImage = ''
+
+        //Declare the variable version
+        POM_VERSION = ''
+        BUILD_NUM = "${env.BUILD_ID}"
+
     }
 
     stages {
 
         stage("build & SonarQube analysis") {          
             steps {
-                dir('./fastfood_BackEnd/'){
+                dir('./fastfood_backend/'){
                     withSonarQubeEnv('SonarServer') {
-                        sh 'mvn verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=fello2023_fastfoodtest'
+                        sh 'mvn verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=fello2023_hfastfood -DskipTests=true'
                     }
                 }
             }
@@ -35,7 +40,7 @@ pipeline {
         stage('Check Quality Gate') {
             steps {
                 echo 'Checking quality gate...'
-                dir('./fastfood_BackEnd/'){ 
+                dir('./fastfood_backend/'){ 
                     script {
                     timeout(time: 20, unit: 'MINUTES') {
                         def qg = waitForQualityGate()
@@ -51,9 +56,9 @@ pipeline {
          stage("Maven Build Back-End") {
             steps {
                 echo 'Build Back-End Project...'
-                dir('./fastfood_BackEnd/'){
+                dir('./fastfood_backend/'){
                     script {
-                    sh "mvn package -DskipTests=true"
+                    sh "mvn package -DskipTests=true -Dspring.profiles.active=test"
                     }
                 }
             }
@@ -62,7 +67,7 @@ pipeline {
          stage("Publish to Nexus Repository Manager") {
             steps {
                 echo 'Publish to Nexus Repository Manager...'
-                dir('./fastfood_BackEnd/'){
+                dir('./fastfood_backend/'){
                     script {
                     pom = readMavenPom file: "pom.xml";
                     filesByGlob = findFiles(glob: "target/*.${pom.packaging}");
@@ -102,7 +107,7 @@ pipeline {
         stage("Build Docker Image"){
             steps{
                 echo 'Build Docker Image'
-                dir('./fastfood_BackEnd/'){
+                dir('./fastfood_backend/'){
                     script{
                         dockerImage = docker.build imageName
                     }
@@ -114,14 +119,35 @@ pipeline {
         stage("Uploading to Nexus Registry"){
             steps{
                 echo 'Uploading Docker image to Nexus ...'
-                dir('./fastfood_BackEnd/'){
+                dir('./fastfood_backend/'){
                     script{
+                        pom = readMavenPom file: "pom.xml";
+                        POM_VERSION = pom.version
                         docker.withRegistry( 'http://'+registry, registryCredentials ) {
-                        dockerImage.push('latest')
+                        
+                        //Tag the Docker Image  with the version that is in the pom file.
+                        // This version is often changed before a new release. 
+                        dockerImage.push("${POM_VERSION}")
                         }
                     }
                 }
             }
-        }   
+        }
+
+        //Project Helm Chart push as tgz file
+        stage("pushing the Backend helm charts to nexus"){
+            steps{
+                script{
+                    withCredentials([string(credentialsId: 'nexus-pass', variable: 'docker_password')]) {
+                       
+                        sh '''
+                            helmversion=$( helm show chart fastfoodapp | grep version | cut -d: -f 2 | tr -d ' ')
+                            tar -czvf  fastfoodapp-${helmversion}.tgz fastfoodapp/
+                            curl -u jenkins-user:$docker_password http://139.177.192.139:8081/repository/fastfood-helm-rep/ --upload-file fastfoodapp-${helmversion}.tgz -v
+                        '''
+                    }
+                }
+            }
+        }     
     }
 }
