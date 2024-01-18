@@ -1,4 +1,3 @@
-
 pipeline {
     triggers {
   pollSCM('* * * * *')
@@ -14,6 +13,11 @@ pipeline {
         NEXUS_URL = "44.211.159.153:8081"
         NEXUS_REPOSITORY = "utrains-nexus-pipeline"
         NEXUS_CREDENTIAL_ID = "nexus-user-credentials"
+
+        imageName = "fastfood"
+        registryCredentials = "nexus-user-credentials"
+        registry = "44.211.159.153:8081/repository/utrains-nexus-registry/"
+        dockerImage = ''
     }
 
     stages {
@@ -22,7 +26,7 @@ pipeline {
             steps {
                 dir('./fastfood_BackEnd/'){
                     withSonarQubeEnv('SonarServer') {
-                        sh 'mvn verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=fello2023_fastfoodtests'
+                        sh 'mvn verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=fello2023_fastfoodtest'
                     }
                 }
             }
@@ -93,5 +97,31 @@ pipeline {
                 }
             }
         }
+        
+        // Building Docker images
+        stage("Build Docker Image"){
+            steps{
+                echo 'Build Docker Image'
+                dir('./fastfood_BackEnd/'){
+                    script{
+                        dockerImage = docker.build imageName
+                    }
+                }
+            }
+        }
+
+        // Push Docker images to Nexus Registry
+        stage("Uploading to Nexus Registry"){
+            steps{
+                echo 'Uploading Docker image to Nexus ...'
+                dir('./fastfood_BackEnd/'){
+                    script{
+                        docker.withRegistry( 'http://'+registry, registryCredentials ) {
+                        dockerImage.push('latest')
+                        }
+                    }
+                }
+            }
+        }   
     }
 }
